@@ -1,0 +1,87 @@
+#!/bin/sh
+
+# GP2X's screen resolution
+W=320
+H=240
+
+: "${FORMAT:=avi}"
+: "${VID_CODEC:=libxvid}"
+: "${AUD_CODEC:=mp3}"
+: "${VID_BITRATE:=300k}"
+: "${AUD_BITRATE:=128k}"
+: "${VID_FPS:=30}"
+: "${AUD_SAMPLE_HZ:=44100}"
+: "${AUD_CHANNELS:=2}"
+
+# Credit goes to llogan at https://superuser.com/a/1136305 for $VID_FILTER's default definition.
+# The resolution has been changed to $Wx$H and the color field has been removed (black is the default)
+: "${VID_FILTER:=scale=$W:$H:force_original_aspect_ratio=decrease,pad=$W:$H:-1:-1}"
+: "${AUD_FILTER:=aresample=async=$AUD_SAMPLE_HZ}"
+: "${OVERWRITE:=n}"
+
+: "${MAX_JOBS:=$(nproc)}"
+
+FFMPEG_ARGS="
+    -nostdin
+    -f $FORMAT
+    -c:v $VID_CODEC
+    -c:a $AUD_CODEC
+    -b:v $VID_BITRATE
+    -b:a $AUD_BITRATE
+    -r $VID_FPS
+    -ar $AUD_SAMPLE_HZ
+    -ac $AUD_CHANNELS
+    -vf $VID_FILTER
+    -af $AUD_FILTER
+    -$OVERWRITE"
+
+print_usage() {
+    echo "Usage: ${0##*/} in-files out-dir"
+    echo "Modify output parameters by changing the following values:"
+    echo "    FORMAT (currently: $FORMAT)"
+    echo "    VID_CODEC (currently: $VID_CODEC)"
+    echo "    AUD_CODEC (currently: $AUD_CODEC)"
+    echo "    VID_BITRATE (currently: $VID_BITRATE)"
+    echo "    AUD_BITRATE (currently: $AUD_BITRATE)"
+    echo "    VID_FPS (currently: $VID_FPS)"
+    echo "    AUD_SAMPLE_HZ (currently: $AUD_SAMPLE_HZ)"
+    echo "    AUD_CHANNELS (currently: $AUD_CHANNELS)"
+    echo "    VID_FILTER (currently: $VID_FILTER)"
+    echo "    OVERWRITE (currently: $OVERWRITE)"
+    echo "    MAX_JOBS (currently: $MAX_JOBS)"
+}
+
+[ "$#" -lt 2 ] && {
+    print_usage
+    exit 1
+}
+
+# OUT_DIR is the last parameter
+# Taken from Laurence Gonsalves' answer @ https://stackoverflow.com/a/1853993/13188071
+for OUT_DIR; do :; done
+
+mkdir -p "$OUT_DIR" || {
+    echo "Could not create '$OUT_DIR': mkdir returned $?"
+    exit 1
+}
+
+job_tag_dir="$(mktemp -d)"
+while [ "$#" -gt 1 ]; do
+    while [ "$(ls "$job_tag_dir" | wc -l)" -ge "$MAX_JOBS" ]; do
+        sleep 1
+    done
+
+    in_file="$1"
+    in_base="${in_file##*/}"
+    out_base="${in_base%.*}.$FORMAT"
+    out_file="$OUT_DIR/$out_base"
+
+    job_tag="$(mktemp -p "$job_tag_dir")"
+    {
+        ffmpeg -i "$in_file" $FFMPEG_ARGS "$out_file"
+        rm "$job_tag"
+    } &
+    shift
+done
+
+wait
